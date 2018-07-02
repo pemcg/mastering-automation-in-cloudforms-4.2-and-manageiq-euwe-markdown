@@ -1,0 +1,174 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?asciidoc-toc?>
+<?asciidoc-numbered?>
+<article xmlns="http://docbook.org/ns/docbook" xmlns:xl="http://www.w3.org/1999/xlink" version="5.0" xml:lang="en">
+<info>
+<title>Argument Passing and Handling</title>
+<date>2016-12-12</date>
+</info>
+<section xml:id="argument-passing-and-handling">
+<title>Argument Passing and Handling</title>
+<simpara>Over the preceding chapters we have discovered several ways of calling Automate instances. In some cases we need to pass arguments into the instance&#8217;s method, but the way that we pass arguments into methods, and receive them from inside the method varies depending on how the instance is called. We need to consider this if we&#8217;re writing code that can be called in several ways, such as from a button and/or from an API call.</simpara>
+<simpara>In this chapter we&#8217;ll look at how we pass arguments into instances, and how we retrieve them from inside the method. We will call the same instance (<emphasis>object_walker</emphasis>) four ways, passing two arguments each time, 'lunch' and 'dinner'. We can use object_walker_reader to show us where the arguments can be read from inside our called method.</simpara>
+<note>
+<simpara>If using version 1.8 or later of object_walker, we need to set <literal>$print_evm_object   = true</literal> in the script so that it prints the attributes of $evm.object</simpara>
+</note>
+<section xml:id="_case_1_calling_from_a_button">
+<title>Case 1 - Calling from a Button</title>
+<simpara>For this first case we call <emphasis>object_walker</emphasis> (via <emphasis>/System/Process/Request/Call_Instance</emphasis>) from a button. We create a button dialog that prompts for two text box fields (see <xref linkend="i1"/>).</simpara>
+<figure xml:id="i1">
+<title>Simple dialog to prompt for input values</title>
+<mediaobject>
+<imageobject>
+<imagedata fileref="images/ss1.png" contentwidth="350" align="center"/>
+</imageobject>
+<textobject><phrase>Screenshot</phrase></textobject>
+</mediaobject>
+</figure>
+<simpara>&#8203;<?asciidoc-br?></simpara>
+<simpara>We then add the button to a button group anywhere.</simpara>
+<simpara>If we click on the button, and enter the values 'salad' and 'pasta' into the dialog boxes, we see the dialog values appear in <literal>$evm.root</literal> in the receiving method, indexed by the key name prefixed by <emphasis>dialog_</emphasis></simpara>
+<literallayout class="monospaced">~/object_walker_reader.rb | grep -P "lunch|dinner"
+     |    $evm.root['dialog_dinner'] = salad   (type: String)
+     |    $evm.root['dialog_lunch'] = pasta   (type: String)</literallayout>
+</section>
+<section xml:id="_case_2_calling_from_the_restful_api">
+<title>Case 2 - Calling from the RESTful API</title>
+<simpara>For this use-case we have an external Ruby script that calls our internal ManageIQ instance via the REST API:</simpara>
+<programlisting language="ruby" linenumbering="unnumbered">url = "https://#{server}"
+
+post_params = {
+  :version =&gt; '1.1',
+  :uri_parts =&gt; {
+    :namespace =&gt; 'Discovery',
+    :class     =&gt; 'ObjectWalker',
+    :instance  =&gt; 'object_walker'
+  },
+  :parameters =&gt; {
+    :lunch  =&gt; "sandwich",
+    :dinner =&gt; "steak"
+  },
+  :requester =&gt; {
+    :auto_approve =&gt; true
+  }
+}.to_json
+query = "/api/automation_requests"
+
+rest_return = RestClient::Request.execute(method: :post, url: url + query,
+                                          :user =&gt; username,
+                                          :password =&gt; password,
+                                          :headers =&gt; {:accept =&gt; :json},
+                                          :payload =&gt; post_params,
+                                          verify_ssl: false)
+result = JSON.parse(rest_return)</programlisting>
+<simpara>In the called method we see the arguments visible in several places; in the task&#8217;s options hash as the <literal>attrs</literal> key; under <literal>$evm.root</literal> because this is the instance that we launched when entering Automate, and under <literal>$evm.object</literal> because this is also our current object.</simpara>
+<literallayout class="monospaced">~/object_walker_reader.rb | grep -P "lunch|dinner"
+    |    object_walker:  $evm.root['automation_task'].options[:attrs] = {:lunch=&gt;"sandwich", :dinner=&gt;"steak", :userid=&gt;"admin"}  (type: Hash)
+    object_walker:  $evm.root['dinner'] = steak  (type: String)
+    object_walker:  $evm.root['lunch'] = sandwich  (type: String)
+    object_walker:  $evm.object['dinner'] = steak  (type: String)
+    object_walker:  $evm.object['lunch'] = sandwich  (type: String)</literallayout>
+</section>
+<section xml:id="_case_3_calling_from_a_relationship_or_automate_datastore_uri">
+<title>Case 3 - Calling from a Relationship or Automate Datastore URI</title>
+<simpara>When we call instances via a relationship (such as from a state machine), we specify the full URI of the instance. We can append arguments to this URI using standard web form query string syntax.</simpara>
+<simpara>For this use case we&#8217;ll call <emphasis>object_walker</emphasis> from an already running automation script using <literal>$evm.instantiate</literal>. The argument to <literal>$evm.instantiate</literal> is the full URI of the instance to be launched, as follows:</simpara>
+<programlisting language="ruby" linenumbering="unnumbered">$evm.instantiate("/Discovery/ObjectWalker/object_walker?lunch=salad&amp;dinner=spaghetti")</programlisting>
+<simpara>When instantiated in this way, the receiving method retrieves the arguments from <literal>$evm.object</literal> (one of our (grand)parent instances is <literal>$evm.root</literal>, our immediate caller is <literal>$evm.parent</literal>).</simpara>
+<literallayout class="monospaced">~/object_walker_reader.rb | grep -P "lunch|dinner"
+     object_walker:   $evm.object['dinner'] = spaghetti   (type: String)
+     object_walker:   $evm.object['lunch'] = salad   (type: String)</literallayout>
+</section>
+<section xml:id="_case_4_passing_arguments_via_the_ws_values_hash_during_a_vm_provision">
+<title>Case 4 - Passing Arguments via the ws_values Hash During a VM Provision</title>
+<simpara>We can pass our own custom values into the virtual machine provisioning process so that they can be interpreted by any method in the <emphasis>Provision VM from Template</emphasis> state machine.</simpara>
+<simpara>The facility to do this is provided by the <emphasis role="strong">additional_values</emphasis> field in an <emphasis role="strong">/api/provision_requests</emphasis> REST call (<emphasis role="strong">additionalValues</emphasis> in the original SOAP <literal>EVMProvisionRequestEx</literal> call), or from the sixth element in the argument list to an <literal>$evm.execute('create_provision_request',&#8230;&#8203;)</literal> call (see <link xl:href="../creating_provisioning_requests_programmatically/chapter.asciidoc">Creating Programming Requests Programmatically</link>).</simpara>
+<simpara>For this use case we&#8217;ve edited the <emphasis>Provision VM from Template</emphasis> state machine to add a few extra stages (see <xref linkend="i3"/>).</simpara>
+<figure xml:id="i3">
+<title>Calling object_walker from the VmProvision_VM state machine</title>
+<mediaobject>
+<imageobject>
+<imagedata fileref="images/ss3.png" contentwidth="700" align="center"/>
+</imageobject>
+<textobject><phrase>Screenshot</phrase></textobject>
+</mediaobject>
+</figure>
+<simpara>&#8203;<?asciidoc-br?></simpara>
+<simpara>These stages could modify the provisioning process if required based on the custom values passed in. An example of this might be to specify the disk size for an additional disk to be added by the AddDisk stage.</simpara>
+<simpara>For this example we&#8217;re using a simple automation method to call <literal>$evm.execute('create_provision_request',&#8230;&#8203;)</literal> to provision a new virtual machine. We specify the custom values in <emphasis role="strong">arg6</emphasis>:</simpara>
+<programlisting language="ruby" linenumbering="unnumbered"># arg1 = version
+args = ['1.1']
+
+# arg2 = templateFields
+args &lt;&lt; {'name'         =&gt; 'rhel7-generic',
+         'request_type' =&gt; 'template'}
+
+# arg3 = vmFields
+args &lt;&lt; {'vm_name' =&gt; 'test10',
+         'vlan'    =&gt; 'rhevm'}
+
+# arg4 = requester
+args &lt;&lt; {'owner_email'      =&gt; 'pemcg@bit63.com',
+         'owner_first_name' =&gt; 'Peter',
+         'owner_last_name'  =&gt; 'McGowan'}
+
+# arg5 = tags
+args &lt;&lt; nil
+
+# arg6 = Web Service Values (ws_values)
+args &lt;&lt; {'lunch'  =&gt; 'soup',
+         'dinner' =&gt; 'chicken'}
+
+# arg7 = emsCustomAttributes
+args &lt;&lt; nil
+
+# arg8 = miqCustomAttributes
+args &lt;&lt; nil
+
+request_id = $evm.execute('create_provision_request', *args)</programlisting>
+<simpara>When we call this method and the virtual machine provisioning process begins, we can retrieve the custom values at any stage from the <literal>miq_provision_request</literal> or <literal>miq_provision</literal> options hash using the <literal>ws_values</literal> key&#8230;&#8203;</simpara>
+<literallayout class="monospaced">~/object_walker_reader.rb | grep -P "lunch|dinner"
+     |    $evm.root['miq_provision'].options[:ws_values] = \
+                            {:lunch=&gt;"soup", :dinner=&gt;"chicken"}   (type: Hash)
+     |    |    miq_provision_request.options[:ws_values] = \
+                            {:lunch=&gt;"soup", :dinner=&gt;"chicken"}   (type: Hash)</literallayout>
+</section>
+<section xml:id="_passing_arguments_when_calling_a_method_in_the_same_class">
+<title>Passing Arguments When Calling a Method in the Same Class</title>
+<simpara>When an instance (such as a state machine) calls a method in the same class as itself, it can pass key/value argument pairs in parentheses as input parameters with the call. We see the <emphasis>VMProvision_VM</emphasis> state machine do this when it calls <emphasis>update_provision_status</emphasis> during the processing of the <emphasis role="strong">On Entry</emphasis>, <emphasis role="strong">On Exit</emphasis> and <emphasis role="strong">On Error</emphasis> (see <xref linkend="i4"/>).</simpara>
+<figure xml:id="i4">
+<title>Text Arguments Passed to update_provision_status</title>
+<mediaobject>
+<imageobject>
+<imagedata fileref="images/ss4.png" contentwidth="400" align="center"/>
+</imageobject>
+<textobject><phrase>Screenshot</phrase></textobject>
+</mediaobject>
+</figure>
+<simpara>&#8203;<?asciidoc-br?></simpara>
+<simpara>When we create a method that accepts input parameters in this way, we need to specify the name and data type of each parameter in the method definition (see <xref linkend="i5"/>).</simpara>
+<figure xml:id="i5">
+<title>Specifying Input Parameters</title>
+<mediaobject>
+<imageobject>
+<imagedata fileref="images/ss5.png" contentwidth="700" align="center"/>
+</imageobject>
+<textobject><phrase>Screenshot</phrase></textobject>
+</mediaobject>
+</figure>
+<simpara>&#8203;<?asciidoc-br?></simpara>
+<simpara>The method then reads the parameters from <literal>$evm.inputs</literal>:</simpara>
+<programlisting language="ruby" linenumbering="unnumbered">update_provision_status(status =&gt; 'pre1',status_state =&gt; 'on_entry')
+
+ # Get status from input field status
+ status = $evm.inputs['status']
+
+ # Get status_state ['on_entry', 'on_exit', 'on_error'] from input field
+ status_state = $evm.inputs['status_state']</programlisting>
+</section>
+<section xml:id="_summary">
+<title>Summary</title>
+<simpara>This chapter shows how we can send arguments when we call instances, and how we process them inside the method. The way that a method retrieves an argument depends on how the instance has been called, but we can use <literal>$evm.root['vmdb_object_type']</literal> as before to determine this, and access the argument in a appropriate manner.</simpara>
+</section>
+</section>
+</article>
